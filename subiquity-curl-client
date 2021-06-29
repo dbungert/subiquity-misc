@@ -38,6 +38,10 @@ function post
     curl_socket POST "$1" "$2" "$3"
 }
 
+# sample storage config
+# extracted from the config member of the return object from 'POST a/storage/guided?choice=...'
+# storage_config=' [ { "ptable": "gpt", "serial": "QEMU_HARDDISK_QM00001", "path": "/dev/sda", "wipe": "superblock", "preserve": false, "name": "", "grub_device": false, "type": "disk", "id": "disk-sda" }, { "device": "disk-sda", "size": 536870912, "wipe": "superblock", "flag": "boot", "number": 1, "preserve": false, "grub_device": true, "type": "partition", "id": "partition-0" }, { "fstype": "fat32", "volume": "partition-0", "preserve": false, "type": "format", "id": "format-0" }, { "device": "disk-sda", "size": 1073741824, "wipe": "superblock", "flag": "", "number": 2, "preserve": false, "type": "partition", "id": "partition-1" }, { "fstype": "ext4", "volume": "partition-1", "preserve": false, "type": "format", "id": "format-1" }, { "device": "disk-sda", "size": 9124708352, "wipe": "superblock", "flag": "", "number": 3, "preserve": false, "type": "partition", "id": "partition-2" }, { "name": "ubuntu-vg", "devices": [ "partition-2" ], "preserve": false, "type": "lvm_volgroup", "id": "lvm_volgroup-0" }, { "name": "ubuntu-lv", "volgroup": "lvm_volgroup-0", "size": "9122611200B", "wipe": "superblock", "preserve": false, "type": "lvm_partition", "id": "lvm_partition-0" }, { "fstype": "ext4", "volume": "lvm_partition-0", "preserve": false, "type": "format", "id": "format-2" }, { "path": "/", "device": "format-2", "type": "mount", "id": "mount-2" }, { "path": "/boot", "device": "format-1", "type": "mount", "id": "mount-1" }, { "path": "/boot/efi", "device": "format-0", "type": "mount", "id": "mount-0" } ]'
+
 echo Super Serious Subiquity Curl Client
 
 socket=.subiquity/socket
@@ -47,52 +51,88 @@ if [ ! -S $socket ] ; then
     exit 1
 fi
 
-# sample storage config
-# extracted from the config member of the return object from 'POST a/storage/guided?choice=...'
-# storage_config=' [ { "ptable": "gpt", "serial": "QEMU_HARDDISK_QM00001", "path": "/dev/sda", "wipe": "superblock", "preserve": false, "name": "", "grub_device": false, "type": "disk", "id": "disk-sda" }, { "device": "disk-sda", "size": 536870912, "wipe": "superblock", "flag": "boot", "number": 1, "preserve": false, "grub_device": true, "type": "partition", "id": "partition-0" }, { "fstype": "fat32", "volume": "partition-0", "preserve": false, "type": "format", "id": "format-0" }, { "device": "disk-sda", "size": 1073741824, "wipe": "superblock", "flag": "", "number": 2, "preserve": false, "type": "partition", "id": "partition-1" }, { "fstype": "ext4", "volume": "partition-1", "preserve": false, "type": "format", "id": "format-1" }, { "device": "disk-sda", "size": 9124708352, "wipe": "superblock", "flag": "", "number": 3, "preserve": false, "type": "partition", "id": "partition-2" }, { "name": "ubuntu-vg", "devices": [ "partition-2" ], "preserve": false, "type": "lvm_volgroup", "id": "lvm_volgroup-0" }, { "name": "ubuntu-lv", "volgroup": "lvm_volgroup-0", "size": "9122611200B", "wipe": "superblock", "preserve": false, "type": "lvm_partition", "id": "lvm_partition-0" }, { "fstype": "ext4", "volume": "lvm_partition-0", "preserve": false, "type": "format", "id": "format-2" }, { "path": "/", "device": "format-2", "type": "mount", "id": "mount-2" }, { "path": "/boot", "device": "format-1", "type": "mount", "id": "mount-1" }, { "path": "/boot/efi", "device": "format-0", "type": "mount", "id": "mount-0" } ]'
+variant="$1"
 
-# server install simulation, accepting defaults, for USA geoip results
-# assumes dryrun server invoked like 'make dryrun-server'
-# based on the actual logged call sequence
-get 'a/locale'
-get 'a/meta/status'
-get 'a/meta/status?cur=null'
-post 'a/meta/client_variant?variant="server"'
-get 'a/locale'
-post 'a/locale' '"en_US.UTF-8"'
-get 'a/refresh'
-get 'a/keyboard'
-get 'a/keyboard/needs_toggle?layout_code="us"&variant_code=""'
-post 'a/keyboard' '{"layout": "us", "variant": "", "toggle": null}'
-get 'a/zdev'
-echo # zdev is outputting nothing and it mangles the printed results
-get 'a/network'
-# put 'a/network/subscription?socket_path="/tmp/tmpfrz1br3n/socket"'
-post 'a/network'
-get 'a/proxy'
-# delete 'a/network/subscription?socket_path="/tmp/tmpfrz1br3n/socket"'
-post 'a/proxy' '""'
-get 'a/mirror'
-post 'a/mirror' '"http://us.archive.ubuntu.com/ubuntu"'
-get 'a/storage/guided?min_size=6442450944'
-post 'a/storage/guided?choice={"disk_id":"disk-sda","use_lvm":true,"password":null}'
-# redundant call to /storage/guided - first one is for sample output, second one is to grab the guided config and send it back
-storage_config=$(post 'a/storage/guided?choice={"disk_id":"disk-sda","use_lvm":true,"password":null}' '' "quiet" | jq '.config')
-post 'a/storage' "$storage_config"
-get 'a/meta/status?cur="WAITING"'
-post 'a/meta/confirm?tty="/dev/tty1"'
-get 'a/meta/status?cur="NEEDS_CONFIRMATION"'
-get 'a/identity'
-# password is ubuntu
-# python code to replicate that hash is:
-#   import crypt
-#   crypt.crypt('ubuntu', '$6$exDY1mhS4KUYCE/2')
-post 'a/identity' '{"realname": "ubuntu", "username": "ubuntu", "hostname": "ubuntu-server", "crypted_password": "$6$exDY1mhS4KUYCE/2$zmn9ToZwTKLhCw.b4/b.ZRTIZM30JZ4QrOQ2aOXJ8yk96xpcCof0kxKwuX1kqLG/ygbJ1f8wxED22bTL4F46P0"}'
-get 'a/ssh'
-post 'a/ssh' '{"install_server": false, "allow_pw": false, "authorized_keys": []}'
-get 'a/snaplist'
-post 'a/snaplist' '[]'
-get 'a/meta/status?cur="RUNNING"'
-get 'a/meta/status?cur="POST_WAIT"'
-get 'a/meta/status?cur="POST_RUNNING"'
-get 'a/meta/status?cur="UU_RUNNING"'
+if [ "$variant" = "server" ] ; then
+    # server install simulation, accepting defaults, for USA geoip results
+    # assumes dryrun server invoked like 'make dryrun-server'
+    # based on the actual logged call sequence
+    get 'a/locale'
+    get 'a/meta/status'
+    get 'a/meta/status?cur=null'
+    # The subiquity client_variant API allows for choosing 'server' or
+    # 'desktop' and is a way to differentiate questions that we need to ask on
+    # one variant but not another.  For now, it makes no difference, but as the
+    # 'server' and 'desktop' variants diverge in functionality offered, it'll
+    # matter.
+    post 'a/meta/client_variant?variant="server"'
+    get 'a/locale'
+    post 'a/locale' '"en_US.UTF-8"'
+    get 'a/refresh'
+    get 'a/keyboard'
+    get 'a/keyboard/needs_toggle?layout_code="us"&variant_code=""'
+    post 'a/keyboard' '{"layout": "us", "variant": "", "toggle": null}'
+    get 'a/zdev'
+    echo # zdev is outputting nothing and it mangles the printed results
+    get 'a/network'
+    # put 'a/network/subscription?socket_path="/tmp/tmpfrz1br3n/socket"'
+    post 'a/network'
+    get 'a/proxy'
+    # delete 'a/network/subscription?socket_path="/tmp/tmpfrz1br3n/socket"'
+    post 'a/proxy' '""'
+    get 'a/mirror'
+    post 'a/mirror' '"http://us.archive.ubuntu.com/ubuntu"'
+    get 'a/storage/guided?min_size=6442450944'
+    post 'a/storage/guided?choice={"disk_id":"disk-sda","use_lvm":true,"password":null}'
+    # redundant call to /storage/guided - first one is for sample output, second one is to grab the guided config and send it back
+    storage_config=$(post 'a/storage/guided?choice={"disk_id":"disk-sda","use_lvm":true,"password":null}' '' "quiet" | jq '.config')
+    post 'a/storage' "$storage_config"
+    get 'a/meta/status?cur="WAITING"'
+    post 'a/meta/confirm?tty="/dev/tty1"'
+    get 'a/meta/status?cur="NEEDS_CONFIRMATION"'
+    get 'a/identity'
+    # password is ubuntu
+    # python code to replicate that hash is:
+    #   import crypt
+    #   crypt.crypt('ubuntu', '$6$exDY1mhS4KUYCE/2')
+    post 'a/identity' '{"realname": "ubuntu", "username": "ubuntu", "hostname": "ubuntu-server", "crypted_password": "$6$exDY1mhS4KUYCE/2$zmn9ToZwTKLhCw.b4/b.ZRTIZM30JZ4QrOQ2aOXJ8yk96xpcCof0kxKwuX1kqLG/ygbJ1f8wxED22bTL4F46P0"}'
+    get 'a/ssh'
+    post 'a/ssh' '{"install_server": false, "allow_pw": false, "authorized_keys": []}'
+    get 'a/snaplist'
+    post 'a/snaplist' '[]'
+    get 'a/meta/status?cur="RUNNING"'
+    get 'a/meta/status?cur="POST_WAIT"'
+    get 'a/meta/status?cur="POST_RUNNING"'
+    get 'a/meta/status?cur="UU_RUNNING"'
+
+elif [ "$variant" = "short" ] ; then
+    post 'a/meta/client_variant?variant="desktop"'
+
+    # endpoints need to be marked configured or status will hang in WAITING
+    # state until they are.  If we mark them configured, we'll get their
+    # default values.
+    post 'a/meta/mark_configured?endpoint_names=["keyboard","mirror","proxy","network","ssh","snaplist"]'
+
+    # at this point, the controllers we must configure are filesystem and
+    # identity.
+    post 'a/identity' '{"realname": "ubuntu", "username": "ubuntu", "hostname": "ubuntu-desktop", "crypted_password": "$6$exDY1mhS4KUYCE/2$zmn9ToZwTKLhCw.b4/b.ZRTIZM30JZ4QrOQ2aOXJ8yk96xpcCof0kxKwuX1kqLG/ygbJ1f8wxED22bTL4F46P0"}'
+
+    get 'a/storage/guided?min_size=6442450944'
+    post 'a/storage/guided?choice={"disk_id":"disk-sda","use_lvm":true,"password":null}'
+    # redundant call to /storage/guided - first one is for sample output, second one is to grab the guided config and send it back
+    storage_config=$(post 'a/storage/guided?choice={"disk_id":"disk-sda","use_lvm":true,"password":null}' '' "quiet" | jq '.config')
+    post 'a/storage' "$storage_config"
+    get 'a/meta/status?cur="WAITING"'
+    post 'a/meta/confirm?tty="/dev/tty1"'
+    get 'a/meta/status?cur="NEEDS_CONFIRMATION"'
+
+    # block on various install states, probably useful to a client
+    get 'a/meta/status?cur="RUNNING"'
+    get 'a/meta/status?cur="POST_WAIT"'
+    get 'a/meta/status?cur="POST_RUNNING"'
+    get 'a/meta/status?cur="UU_RUNNING"'
+else
+    echo "usage: $0 <variant>"
+    echo "need a simulated install type varaint - try server or short"
+    exit 1
+fi
