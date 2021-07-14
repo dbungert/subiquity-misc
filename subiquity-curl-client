@@ -111,7 +111,7 @@ elif [ "$variant" = "short" ] ; then
     # endpoints need to be marked configured or status will hang in WAITING
     # state until they are.  If we mark them configured, we'll get their
     # default values.
-    post 'a/meta/mark_configured?endpoint_names=["keyboard","mirror","proxy","network","ssh","snaplist"]'
+    post 'a/meta/mark_configured?endpoint_names=["keyboard","mirror","proxy","network","ssh","snaplist","timezone"]'
 
     # at this point, the controllers we must configure are filesystem and
     # identity.
@@ -125,6 +125,8 @@ elif [ "$variant" = "short" ] ; then
     get 'a/meta/status?cur="WAITING"'
     post 'a/meta/confirm?tty="/dev/tty1"'
     get 'a/meta/status?cur="NEEDS_CONFIRMATION"'
+
+    # post 'a/timezone?tz="UTC"'
 
     # block on various install states, probably useful to a client
     get 'a/meta/status?cur="RUNNING"'
