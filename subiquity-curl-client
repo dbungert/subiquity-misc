@@ -133,6 +133,8 @@ elif [ "$variant" = "short" ] ; then
     get 'a/meta/status?cur="POST_WAIT"'
     get 'a/meta/status?cur="POST_RUNNING"'
     get 'a/meta/status?cur="UU_RUNNING"'
+    post 'a/reboot'
+
 else
     echo "usage: $0 <variant>"
     echo "need a simulated install type varaint - try server or short"
