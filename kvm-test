@@ -15,16 +15,19 @@ cfg = '''
 iso:
     basedir: /srv/iso
     release:
-        pending: impish/pending/impish-live-server-amd64.iso
+        edge: impish/subiquity-edge/impish-live-server-subiquity-edge-amd64.iso
+        canary: impish/impish-desktop-canary-amd64.iso
         impish: impish/impish-live-server-amd64.iso
         hirsute: hirsute/ubuntu-21.04-live-server-amd64.iso
         groovy: groovy/ubuntu-20.10-live-server-amd64.iso
-        focal: focal/ubuntu-20.04.2-live-server-amd64.iso
+        focal: focal/focal-live-server-amd64.iso
         bionic: bionic/ubuntu-18.04.5-live-server-amd64.iso
-    default: impish
+    default: edge
 '''
+        # focal: focal/ubuntu-20.04.2-live-server-amd64.iso
+        # pending: impish/pending/impish-live-server-amd64.iso
 
-memory = 8 * 1024
+sys_memory = 8 * 1024
 
 def salted_crypt(plaintext_password):
     # match subiquity documentation
@@ -39,8 +42,12 @@ class Context:
         self.release = args.release
         if not self.release:
             self.release = self.config["iso"]["default"]
-        self.baseiso = os.path.join(self.config["iso"]["basedir"],
-                                    self.config["iso"]["release"][self.release])
+        iso = self.config["iso"]
+        try:
+            self.baseiso = os.path.join(iso["basedir"],
+                                        iso["release"][self.release])
+        except KeyError:
+            pass
         self.curdir = os.getcwd()
         self.iso = f'{self.curdir}/{self.release}-test.iso'
         self.hostname = f'{self.release}-test'
@@ -52,8 +59,6 @@ autoinstall:
     version: 1
     locale:
         en_US.UTF-8
-    apt:
-        proxy: http://_gateway:1234
     ssh:
         install-server: true
         allow-pw: true
@@ -62,6 +67,8 @@ autoinstall:
         password: "{self.password}"
         username: ubuntu
 '''
+    # apt:
+    #     proxy: http://_gateway:1234
     # updates: security
     # ssh:
     #     install-server: true
@@ -113,9 +120,12 @@ autoinstall:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-r', '--release', action='store', help='target release')
+parser.add_argument('-B', '--bios', action='store_true', default=False,
+                    help='boot in BIOS mode')
+parser.add_argument('-n', '--nets', action='store', default=1, type=int,
+                    help='number of network interfaces')
 subparsers = parser.add_subparsers(required=True)
 scparsers = {}
-
 
 def subcmd(fn):
     name = fn.__name__
@@ -224,8 +234,8 @@ def touch(dest):
         pass
 
 
-def create_seed(ctx, tempdir):
-    write(f'{tempdir}/user-data', ctx.cloudconfig)
+def create_seed(cloudconfig, tempdir):
+    write(f'{tempdir}/user-data', cloudconfig)
     touch(f'{tempdir}/meta-data')
     seed = f'{tempdir}/seed.iso'
     run(f'cloud-localds {seed} {tempdir}/user-data {tempdir}/meta-data')
@@ -253,6 +263,28 @@ def drive(path, cache=False):
     return '-drive ' + ','.join(kwargs)
 
 
+def nets(ctx):
+    ret = []
+    if ctx.args.nets > 0:
+        for _ in range(ctx.args.nets):
+            ret += ['-nic', 'user,model=virtio-net-pci,hostfwd=tcp::10022-:22']
+    else:
+        ret += ['-nic', 'none']
+    return ret
+
+
+def bios(ctx):
+    ret = []
+    # https://help.ubuntu.com/community/UEFI
+    if not ctx.args.bios:
+        ret += ['-bios', '/usr/share/qemu/OVMF.fd']
+    return ret
+
+
+def memory(ctx):
+    return ['-m', str(sys_memory)]
+
+
 @subcmd
 def install(ctx):
     if os.path.exists(ctx.target):
@@ -271,8 +303,6 @@ def install(ctx):
 
         kvm = ['kvm', '-no-reboot', drive(ctx.target)]
 
-        kvm += ['-m', str(memory)]
-
         if ctx.args.this:
             iso = ctx.args.this
         elif ctx.args.base:
@@ -281,19 +311,18 @@ def install(ctx):
             iso = ctx.iso
 
         kvm += ['-cdrom', iso]
-
-        if ctx.args.nets > 0:
-            for _ in range(ctx.args.nets):
-                kvm += ['-nic', 'user,model=virtio-net-pci']
-        else:
-            kvm += ['-nic', 'none']
+        kvm += memory(ctx)
+        kvm += bios(ctx)
+        kvm += nets(ctx)
 
         if ctx.args.serial:
             kvm += ['-nographic']
             appends += ['console=ttyS0']
 
-        if ctx.args.autoinstall:
-            kvm += [drive(create_seed(ctx, tempdir), True)]
+        if ctx.args.autoinstall or ctx.args.autoinstall_file:
+            if ctx.args.autoinstall_file:
+                ctx.cloudconfig = ctx.args.autoinstall_file.read()
+            kvm += [drive(create_seed(ctx.cloudconfig, tempdir), True)]
             appends += ['autoinstall']
 
         if len(appends) > 0:
@@ -302,39 +331,40 @@ def install(ctx):
             toappend = ' '.join(appends)
             kvm += ['-append', f'"{toappend}"']
 
-        # share = '/home/dbungert/share'
-        # tag = 'share'
-        # kvm += ['-virtfs']
-        # kvm += [f'local,path={share},mount_tag={tag},security_model=none,id={tag}']
-
         run(f'qemu-img create -f qcow2 {ctx.target} 25G')
         with mounter(iso, mntdir):
             run(' '.join(kvm))
 
 
-# add_argument('install', '-a', '--autoinstall', default='', action='store',
-#              help='merge supplied dict into default autoinstall')
 add_argument('install', '-b', '--base', default=False, action='store_true',
              help='use base iso')
 add_argument('install', '-a', '--autoinstall', default=False,
              action='store_true', help='use autoinstall')
-add_argument('install', '-n', '--nets', action='store', default=1, type=int,
-             help='number of network interfaces')
 add_argument('install', '-o', '--overwrite', default=False, action='store_true',
              help='allow overwrite of the target image')
 add_argument('install', '-s', '--serial', default=False, action='store_true',
              help='attach to serial console')
 add_argument('install', '-t', '--this', action='store',
              help='use this iso')
-
-# add_argument('install', '-A', '--arch', default='amd64', action='store',
-#              help='Alternate architecture - supported are amd64 (default) ' \
-#                   + 'and arm64')
+add_argument('install', '-f', '--autoinstall-file', action='store',
+             type=argparse.FileType(),
+             help='load autoinstall from file')
 
 
 @subcmd
 def boot(ctx):
-    run(f'kvm -no-reboot -m {memory} {drive(ctx.target)}')
+    target = ctx.target
+    if ctx.args.this:
+        target = ctx.args.this
+
+    kvm = f'kvm -no-reboot {drive(target)}'.split(' ')
+    kvm += memory(ctx)
+    kvm += bios(ctx)
+    kvm += nets(ctx)
+    run(' '.join(kvm))
+
+add_argument('boot', '-t', '--this', action='store',
+             help='use this img')
 
 
 @subcmd
@@ -346,7 +376,6 @@ def help(ctx):
 @subcmd
 def cloud(ctx):
     print(ctx.cloudconfig)
-    print(ctx.password)
 
 
 try:
