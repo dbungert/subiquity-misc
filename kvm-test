@@ -285,6 +285,39 @@ def memory(ctx):
     return ['-m', str(sys_memory)]
 
 
+def kvm_common(ctx):
+    ret = ['kvm', '-no-reboot']
+    ret += ['-vga', 'vmware']
+    ret += memory(ctx)
+    ret += bios(ctx)
+    ret += nets(ctx)
+    return ret
+
+
+def grub_get_extra_args(mntdir):
+    # The inject-snap process of livefs-edit adds a new layer squash
+    # that must be in place, or the injected snap isn't there.
+    # We don't want to hardcode the current value, because that layer
+    # isn't there if a base iso is being used.
+    # Parse the args out of grub.cfg and include them with ours.
+    cfgpath = f'{mntdir}/boot/grub/grub.cfg'
+    ret = []
+    with open(cfgpath, 'r') as fp:
+        for line in fp.readlines():
+            chunks = line.strip().split('\t')
+            # ['linux', '/casper/vmlinuz  ---']
+            # ['linux', '/casper/vmlinuz layerfs-path=a.b.c.d.e.squashfs ---']
+            if not chunks or not chunks[0] == 'linux':
+                continue
+            subchunks = chunks[1].split(' ')
+            if not subchunks or not subchunks[0] == '/casper/vmlinuz':
+                continue
+            for sc in subchunks[1:]:
+                if sc != '---':
+                    ret.append(sc)
+    return ret
+
+
 @subcmd
 def install(ctx):
     if os.path.exists(ctx.target):
@@ -301,7 +334,7 @@ def install(ctx):
         os.mkdir(mntdir)
         appends = []
 
-        kvm = ['kvm', '-no-reboot', drive(ctx.target)]
+        kvm = kvm_common(ctx)
 
         if ctx.args.this:
             iso = ctx.args.this
@@ -311,9 +344,7 @@ def install(ctx):
             iso = ctx.iso
 
         kvm += ['-cdrom', iso]
-        kvm += memory(ctx)
-        kvm += bios(ctx)
-        kvm += nets(ctx)
+        kvm += [drive(ctx.target)]
 
         if ctx.args.serial:
             kvm += ['-nographic']
@@ -325,14 +356,16 @@ def install(ctx):
             kvm += [drive(create_seed(ctx.cloudconfig, tempdir), True)]
             appends += ['autoinstall']
 
-        if len(appends) > 0:
-            kvm += ['-kernel', f'{mntdir}/casper/vmlinuz']
-            kvm += ['-initrd', f'{mntdir}/casper/initrd']
-            toappend = ' '.join(appends)
-            kvm += ['-append', f'"{toappend}"']
-
         run(f'qemu-img create -f qcow2 {ctx.target} 25G')
         with mounter(iso, mntdir):
+            appends += grub_get_extra_args(mntdir)
+
+            if len(appends) > 0:
+                kvm += ['-kernel', f'{mntdir}/casper/vmlinuz']
+                kvm += ['-initrd', f'{mntdir}/casper/initrd']
+                toappend = ' '.join(appends)
+                kvm += ['-append', f'"{toappend}"']
+
             run(' '.join(kvm))
 
 
@@ -357,10 +390,8 @@ def boot(ctx):
     if ctx.args.this:
         target = ctx.args.this
 
-    kvm = f'kvm -no-reboot {drive(target)}'.split(' ')
-    kvm += memory(ctx)
-    kvm += bios(ctx)
-    kvm += nets(ctx)
+    kvm = kvm_common(ctx)
+    kvm += [drive(target)]
     run(' '.join(kvm))
 
 add_argument('boot', '-t', '--this', action='store',

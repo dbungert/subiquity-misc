@@ -1,0 +1,92 @@
+#!/bin/bash
+
+set -eux
+
+# config for the vm
+dist="impish"
+topic="test"
+arch="ppc64el"
+
+# get the cloud image, if we didn't get one yet today
+imagedir=/srv/iso/$dist/$arch
+mkdir -p "$imagedir"
+pushd "$imagedir"
+
+curimg=$dist-server-cloudimg-$arch.img
+date=$(date +%Y-%m-%d)
+dateimg="$(basename $curimg .img)-${date}.img"
+
+if [ ! -f "$dateimg" ] ; then
+    urlbase="https://cloud-images.ubuntu.com/${dist}/current"
+    curl "$urlbase/$curimg" --output "$dateimg"
+    # FIXME checksum verify
+fi
+
+rm -f "$curimg" || true
+ln -s "$dateimg" "$curimg"
+
+# create qemu image
+i=1
+while true ; do
+    base=/var/lib/libvirt/images
+    inst="$(printf "${base}/${topic}-${dist}-${arch}-%02d.qcow2" "$i")"
+    [ ! -f "$inst" ] && break
+    i=$(($i + 1))
+done
+hostname=$(basename "$inst" ".qcow2")
+
+sudo cp "$curimg" "$inst"
+sudo qemu-img resize $inst 20G
+
+tempdir=$(mktemp -d)
+chmod 755 "$tempdir"
+pushd "$tempdir"
+
+cat >meta-data <<EOF
+local-hostname: "$hostname"
+EOF
+
+PUB_KEY=$(cat ~/.ssh/id_house.pub)
+
+cat >user-data <<EOF
+#cloud-config
+users:
+  - name: ubuntu
+    plain_text_passwd: ubuntu
+    ssh-authorized-keys: [$PUB_KEY]
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    groups: sudo lxd
+    shell: /bin/bash
+runcmd:
+  - echo "AllowUsers ubuntu" >> /etc/ssh/sshd_config
+  - restart ssh
+EOF
+
+cloud-localds user-data.img user-data meta-data
+chmod 644 user-data.img
+
+qvirt=qemu
+qarch="$arch"
+case "$arch" in
+    "amd64")   qvirt="kvm";;
+    "arm64")   qarch="aarch64";;
+    "ppc64el") qarch="ppc64le";;
+    # "armhf") qarch="armv7l";; #qarch="arm";;
+    # armhf doesn't boot
+    *) echo "need arch info for virt-install"; exit 1;;
+esac
+
+sudo virt-install --connect qemu:///system \
+	--name "$hostname" \
+    --virt-type "$qvirt" \
+    --arch $qarch \
+	--ram 8192 \
+	--vcpus=4 \
+	--os-type linux \
+	--os-variant ubuntu20.04 \
+	--disk path=$inst,format=qcow2 \
+	--disk path=user-data.img,format=raw \
+	--check path_in_use=off \
+	--import \
+	--network network=default \
+	--noautoconsole

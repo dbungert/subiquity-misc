@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -ux
+
+dists="bionic focal groovy hirsute impish"
+
+for d in $dists; do
+    lxc delete --force tester || true
+    ./scripts/test-in-lxd.sh ubuntu-daily:$d "make check"
+done
