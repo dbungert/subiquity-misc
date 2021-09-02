@@ -312,6 +312,7 @@ def grub_get_extra_args(mntdir):
             subchunks = chunks[1].split(' ')
             if not subchunks or not subchunks[0] == '/casper/vmlinuz':
                 continue
+            # breakpoint()
             for sc in subchunks[1:]:
                 if sc != '---':
                     ret.append(sc)

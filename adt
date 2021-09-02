@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+
+import argparse
+import glob
+import subprocess
+import sys
+
+default_release = 'impish'
+
+def run(cmd):
+    cmdarray = cmd.split(' ')
+    return subprocess.run(cmdarray, capture_output=True, text=True).stdout
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-q', '--qemu', default=False,
+                        action='store_true')
+    parser.add_argument('-r', '--release', default=default_release, type=str)
+    parser.add_argument('-a', '--arch', default='', type=str)
+    parser.add_argument('target', nargs='?')
+    return parser.parse_args()
+
+
+def get_ubuntu_releases():
+    return run('distro-info -a').splitlines()
+
+
+def get_debian_releases():
+    return ('stable', 'testing', 'unstable', 'sid', 'buster',
+            'bullseye', 'bookworm')
+
+
+args = get_args()
+if args.release in get_ubuntu_releases():
+    ostype = 'ubuntu'
+elif args.release in get_debian_releases():
+    ostype = 'debian'
+else:
+    raise Exception('unknown OS')
+
+if not args.target:
+    dscs = glob.glob('*.dsc')
+    if not dscs:
+        raise Exception('test target not found')
+    if len(dscs) != 1:
+        raise Exception(f'ambiguous test target - found these: {dscs}')
+
+if not args.arch:
+    args.arch = run('dpkg --print-architecture').strip()
+
+if args.qemu:
+    image = f'/srv/iso/autopkgtest-{args.release}-{args.arch}.img'
+    if not os.path.exists(image):
+        raise Exception(f'''\
+    image {image} not found - do we need to create it?
+    consider command:
+    pushd /srv/iso && autopkgtest-buildvm-ubuntu-cloud -r{args.arch}
+    ''')
+    subprocess.run(['autopkgtest', args.target, '--', 'qemu', image,
+                    '--ram-size=8192', '--cpus=4'],
+                   stderr=sys.stderr, stdout=sys.stdout)
+else:
+    image = f'autopkgtest/{ostype}/{args.release}/{args.arch}'
+
+    found = False
+    image_table = run('lxc image list --format=csv').splitlines()
+    for entry in image_table:
+        if entry.split(',')[0] == image:
+            found = True
+            break
+
+    if not found:
+        raise Exception(f'''\
+    image {image} not found - do we need to create it?
+    consider command:
+    autopkgtest-build-lxd images:{ostype}/{args.release}
+    ''')
+
+    subprocess.run(['autopkgtest', args.target, '--', 'lxd', image],
+                   stderr=sys.stderr, stdout=sys.stdout)
