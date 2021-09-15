@@ -6,6 +6,7 @@ import copy
 import crypt
 import os
 import random
+import socket
 import sys
 import tempfile
 import yaml
@@ -18,14 +19,13 @@ iso:
         edge: impish/subiquity-edge/impish-live-server-subiquity-edge-amd64.iso
         canary: impish/impish-desktop-canary-amd64.iso
         impish: impish/impish-live-server-amd64.iso
+        desktop: impish/impish-desktop-amd64.iso
         hirsute: hirsute/ubuntu-21.04-live-server-amd64.iso
         groovy: groovy/ubuntu-20.10-live-server-amd64.iso
         focal: focal/focal-live-server-amd64.iso
-        bionic: bionic/ubuntu-18.04.5-live-server-amd64.iso
+        bionic: bionic/bionic-live-server-amd64.iso
     default: edge
 '''
-        # focal: focal/ubuntu-20.04.2-live-server-amd64.iso
-        # pending: impish/pending/impish-live-server-amd64.iso
 
 sys_memory = 8 * 1024
 
@@ -263,11 +263,31 @@ def drive(path, cache=False):
     return '-drive ' + ','.join(kwargs)
 
 
+class PortFinder:
+    def __init__(self):
+        self.finder = self.port_generator()
+
+    def port_generator(self):
+        for port in range(2222, 8000):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                res = sock.connect_ex(('localhost', port))
+                if res != 0:
+                    yield port
+
+    def get(self):
+        return next(self.finder)
+
 def nets(ctx):
+    ports = PortFinder()
+
     ret = []
     if ctx.args.nets > 0:
         for _ in range(ctx.args.nets):
-            ret += ['-nic', 'user,model=virtio-net-pci,hostfwd=tcp::10022-:22']
+            port = ports.get()
+            ret += ['-nic',
+                    'user,model=virtio-net-pci,' +
+                    f'hostfwd=tcp::{port}-:22']
+            #,restrict=on']
     else:
         ret += ['-nic', 'none']
     return ret
@@ -287,7 +307,7 @@ def memory(ctx):
 
 def kvm_common(ctx):
     ret = ['kvm', '-no-reboot']
-    ret += ['-vga', 'vmware']
+    # ret += ['-vga', 'vmware']
     ret += memory(ctx)
     ret += bios(ctx)
     ret += nets(ctx)
@@ -312,10 +332,10 @@ def grub_get_extra_args(mntdir):
             subchunks = chunks[1].split(' ')
             if not subchunks or not subchunks[0] == '/casper/vmlinuz':
                 continue
-            # breakpoint()
             for sc in subchunks[1:]:
                 if sc != '---':
                     ret.append(sc)
+            break
     return ret
 
 
@@ -346,6 +366,8 @@ def install(ctx):
 
         kvm += ['-cdrom', iso]
         kvm += [drive(ctx.target)]
+        # drive2 = f'{ctx.curdir}/drive2.img'
+        # kvm += [drive(drive2)]
 
         if ctx.args.serial:
             kvm += ['-nographic']
@@ -358,6 +380,7 @@ def install(ctx):
             appends += ['autoinstall']
 
         run(f'qemu-img create -f qcow2 {ctx.target} 25G')
+        # run(f'qemu-img create -f qcow2 {drive2} 25G')
         with mounter(iso, mntdir):
             appends += grub_get_extra_args(mntdir)
 

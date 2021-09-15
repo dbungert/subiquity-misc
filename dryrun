@@ -1,0 +1,16 @@
+#!/bin/bash
+
+set -x
+
+rm -fr .subiquity
+
+PYTHONPATH=$PWD:$PWD/probert:$PWD/curtin
+export PYTHONPATH
+
+CONFIG=examples/win10.json
+# CONFIG=examples/existing-partitions.json
+# CONFIG=examples/simple.json
+# CONFIG=examples/many-nics-and-disks.json
+# CONFIG=/home/dbungert/a/probert.json
+
+python3 -m subiquity --dry-run --bootloader uefi --machine-config ${CONFIG}

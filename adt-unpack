@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+
+# take a adt url, unpack the args, spawn an editor, repack the url
+
+import sys
+import tempfile
+import os
+
+url = sys.argv[1]
+buf = []
+
+url_split = url.split('?')
+buf.append(url_split[0] + '?')
+
+post_question = url_split[1]
+url_args = post_question.split('&')
+for i, arg in enumerate(url_args):
+    if i >= len(url_args) - 1:
+        buf.append(arg)
+    else:
+        buf.append(arg + '&')
+
+with tempfile.NamedTemporaryFile(mode='w+') as fp:
+    fp.write('\n'.join(buf) + '\n')
+    fp.flush()
+    os.system(f'$EDITOR {fp.name}')
+    fp.seek(0, 0)
+    lines = [l.strip() for l in fp.readlines()]
+
+print()
+print(''.join(lines))

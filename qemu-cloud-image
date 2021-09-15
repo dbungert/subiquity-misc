@@ -4,8 +4,9 @@ set -eux
 
 # config for the vm
 dist="impish"
-topic="test"
-arch="ppc64el"
+topic="snapd"
+# arch="ppc64el"
+arch="amd64"
 
 # get the cloud image, if we didn't get one yet today
 imagedir=/srv/iso/$dist/$arch
@@ -35,8 +36,8 @@ while true ; do
 done
 hostname=$(basename "$inst" ".qcow2")
 
-sudo cp "$curimg" "$inst"
-sudo qemu-img resize $inst 20G
+cp "$curimg" "$inst"
+qemu-img resize $inst 20G
 
 tempdir=$(mktemp -d)
 chmod 755 "$tempdir"
@@ -52,15 +53,17 @@ cat >user-data <<EOF
 #cloud-config
 users:
   - name: ubuntu
-    plain_text_passwd: ubuntu
-    ssh-authorized-keys: [$PUB_KEY]
+    passwd: '\$6\$sIbjdFhcAcmRL4qD\$9dTN2pjwoFBEIUx6ugixYIMPv1cY29hiqhSwL50t0L6bh74gJucMS9Bl5Wp2GdPbotWmTtO.EMdZcRMLnFRCV/'
+    ssh-authorized-keys: ['$PUB_KEY']
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
-    groups: sudo lxd
+    groups: [sudo, lxd]
     shell: /bin/bash
 runcmd:
-  - echo "AllowUsers ubuntu" >> /etc/ssh/sshd_config
+  - echo "AllowUsers ubuntu user" >> /etc/ssh/sshd_config
+  - echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
   - restart ssh
 EOF
+# plain_text_passwd: 'ubuntu'
 
 cloud-localds user-data.img user-data meta-data
 chmod 644 user-data.img
@@ -68,7 +71,7 @@ chmod 644 user-data.img
 qvirt=qemu
 qarch="$arch"
 case "$arch" in
-    "amd64")   qvirt="kvm";;
+    "amd64")   qvirt="kvm";; # echo "need a plan for amd64"; exit 1;;
     "arm64")   qarch="aarch64";;
     "ppc64el") qarch="ppc64le";;
     # "armhf") qarch="armv7l";; #qarch="arm";;
@@ -76,10 +79,11 @@ case "$arch" in
     *) echo "need arch info for virt-install"; exit 1;;
 esac
 
-sudo virt-install --connect qemu:///system \
+    # --arch $qarch \
+
+virt-install --connect qemu:///system \
 	--name "$hostname" \
     --virt-type "$qvirt" \
-    --arch $qarch \
 	--ram 8192 \
 	--vcpus=4 \
 	--os-type linux \
