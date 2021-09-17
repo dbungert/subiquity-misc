@@ -10,15 +10,25 @@ default_release = 'impish'
 
 def run(cmd):
     cmdarray = cmd.split(' ')
-    return subprocess.run(cmdarray, capture_output=True, text=True).stdout
+    return subprocess.run(cmdarray, capture_output=True, check=True,
+                          text=True).stdout
+
+def show(cmd):
+    if type(cmd) == str:
+        cmdstr = cmd
+        cmd = cmd.split(' ')
+    else:
+        cmdstr = ' '.join(cmd)
+    print(f'+ {cmdstr}')
+    subprocess.run(cmd, stderr=sys.stderr, stdout=sys.stdout, check=True)
 
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-q', '--qemu', default=False,
-                        action='store_true')
+    parser.add_argument('-q', '--qemu', default=False, action='store_true')
     parser.add_argument('-r', '--release', default=default_release, type=str)
     parser.add_argument('-a', '--arch', default='', type=str)
+    parser.add_argument('-b', '--build', default=False, action='store_true')
     parser.add_argument('target', nargs='?')
     parser.add_argument('extra', nargs='*')
     return parser.parse_args()
@@ -52,20 +62,22 @@ if not args.target:
 if not args.arch:
     args.arch = run('dpkg --print-architecture').strip()
 
-adt_args = ['autopkgtest', *args.extra, args.target, '--']
+adt = ['autopkgtest', *args.extra, args.target, '--']
 
 if args.qemu:
-    image = f'/srv/qemu/autopkgtest-{args.release}-{args.arch}.img'
-    if not os.path.exists(image):
-        raise Exception(f'''\
-image {image} not found - do we need to create it?
-consider command:
-pushd /srv/iso && autopkgtest-buildvm-ubuntu-cloud -r{args.release}
-''')
+    if ostype != "ubuntu":
+        raise Exception('qemu adt requires ubuntu')
 
-    adt_args += ['qemu', image, '--ram-size=8192', '--cpus=4']
+    image = f'/srv/qemu/autopkgtest-{args.release}-{args.arch}.img'
+    adt += ['qemu', image, '--ram-size=8192', '--cpus=4']
+    build = f'autopkgtest-buildvm-ubuntu-cloud -r{args.release}' \
+            + ' -o/srv/qemu'
+
+    found = os.path.exists(image)
 else:
     image = f'autopkgtest/{ostype}/{args.release}/{args.arch}'
+    adt += ['lxd', image]
+    build = f'autopkgtest-build-lxd images:{ostype}/{args.release}'
 
     found = False
     image_table = run('lxc image list --format=csv').splitlines()
@@ -74,14 +86,13 @@ else:
             found = True
             break
 
-    if not found:
+if not found:
+    if args.build:
+        show(build)
+    else:
         raise Exception(f'''\
-image {image} not found - do we need to create it?
-consider command:
-autopkgtest-build-lxd images:{ostype}/{args.release}
+image {image} not found - do we need to create it?  consider command:
+{build}
 ''')
 
-    adt_args += ['lxd', image]
-
-proc = subprocess.run(adt_args, stderr=sys.stderr, stdout=sys.stdout)
-sys.exit(proc.returncode)
+show(adt)
