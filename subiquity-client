@@ -171,7 +171,8 @@ async def do_v2(client):
 
 async def main():
     async with client_factory(find_socket()) as client:
-        await do_auto_server_install(client, do_v2)
+        await client.post('/shutdown', mode='REBOOT', immediate=True)
+        # await do_auto_server_install(client, do_v2)
 
 
 if __name__ == "__main__":
