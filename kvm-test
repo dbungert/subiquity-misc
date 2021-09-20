@@ -67,27 +67,6 @@ autoinstall:
         password: "{self.password}"
         username: ubuntu
 '''
-    # apt:
-    #     proxy: http://_gateway:1234
-    # updates: security
-    # ssh:
-    #     install-server: true
-    #     allow-pw: false
-    #     authorized-keys:
-    #         - 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDPkXBpNKXlyND4rHGG1cqoNePnmbQBLaSjbfkYgHswB dbungert@github/49698143 # ssh-import-id gh:dbungert'
-    #         - 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEaPMjkjsCV4B8rmXtZVlmAgKV86zwNG8n9Wq/ro7R6g dbungert@github/53138632 # ssh-import-id gh:dbungert'
-    # updates: all
-    # interactive-sections:
-    #     - network
-    # proxy: http://_gateway:3142
-
-    # def update_cc(self, data):
-        # cc = yaml.safe_load(ctx.cloudconfig)
-        # change to load from a file instead of a string
-        # ai = {'autoinstall': yaml.safe_load(ctx.args.autoinstall)}
-
-        # merged = self.merge(cc, ai)
-        # ctx.cloudconfig = '#cloud-config\n' + yaml.dump(merged)
 
     def merge(self, a, b):
         '''Take a pair of dictionaries, and provide the merged result.
@@ -124,18 +103,28 @@ parser.add_argument('-B', '--bios', action='store_true', default=False,
                     help='boot in BIOS mode')
 parser.add_argument('-n', '--nets', action='store', default=1, type=int,
                     help='number of network interfaces')
-subparsers = parser.add_subparsers(required=True)
-scparsers = {}
+parser.add_argument('-q', '--quick', default=False, action='store_true',
+                    help='build iso with quick-test-this-branch')
+parser.add_argument('-c', '--clean', default=False, action='store_true',
+                    help='agressively clean the snapcraft build env')
+parser.add_argument('-b', '--base', default=False, action='store_true',
+                    help='use base iso')
+parser.add_argument('-i', '--img', action='store', help='use this img')
+parser.add_argument('-a', '--autoinstall', default=False,
+                    action='store_true', help='use autoinstall')
+parser.add_argument('-o', '--overwrite', default=False, action='store_true',
+                    help='allow overwrite of the target image')
+parser.add_argument('-s', '--serial', default=False, action='store_true',
+                    help='attach to serial console')
+parser.add_argument('-t', '--this', action='store',
+                    help='use this iso')
+parser.add_argument('-f', '--autoinstall-file', action='store',
+                    type=argparse.FileType(),
+                    help='load autoinstall from file')
 
-def subcmd(fn):
-    name = fn.__name__
-    scparsers[name] = scparser = subparsers.add_parser(name)
-    scparser.set_defaults(func=fn)
-    return fn
-
-
-def add_argument(name, *args, **kwargs):
-    scparsers[name].add_argument(*args, **kwargs)
+parser.add_argument('--build', default=False, action='store_true')
+parser.add_argument('--install', default=False, action='store_true')
+parser.add_argument('--boot', default=False, action='store_true')
 
 
 def waitstatus_to_exitcode(waitstatus):
@@ -172,6 +161,7 @@ def run(cmds):
             continue
         # semi-simulate "bash -x"
         print(f'+ {cmd}')
+        # FIXME subprocess check
         ec = waitstatus_to_exitcode(os.system(cmd))
         if ec != 0:
             raise SubProcessFailure(f'command [{cmd}] returned [{ec}]')
@@ -194,7 +184,6 @@ def mounter(src, dest):
         run(f'sudo umount {dest}')
 
 
-@subcmd
 def build(ctx):
     if ctx.args.base:
         ctx.baseiso = ctx.args.base
@@ -215,13 +204,6 @@ def build(ctx):
                     {ctx.iso}
                 ''')
     run(f'test -f {ctx.iso}')
-
-
-add_argument('build', '-q', '--quick', default=False, action='store_true',
-             help='build iso with quick-test-this-branch')
-add_argument('build', '-c', '--clean', default=False, action='store_true',
-             help='agressively clean the snapcraft build env')
-add_argument('build', '-b', '--base', action='store', help='specific base iso')
 
 
 def write(dest, data):
@@ -339,7 +321,6 @@ def grub_get_extra_args(mntdir):
     return ret
 
 
-@subcmd
 def install(ctx):
     if os.path.exists(ctx.target):
         if not ctx.args.overwrite:
@@ -393,42 +374,21 @@ def install(ctx):
             run(' '.join(kvm))
 
 
-add_argument('install', '-b', '--base', default=False, action='store_true',
-             help='use base iso')
-add_argument('install', '-a', '--autoinstall', default=False,
-             action='store_true', help='use autoinstall')
-add_argument('install', '-o', '--overwrite', default=False, action='store_true',
-             help='allow overwrite of the target image')
-add_argument('install', '-s', '--serial', default=False, action='store_true',
-             help='attach to serial console')
-add_argument('install', '-t', '--this', action='store',
-             help='use this iso')
-add_argument('install', '-f', '--autoinstall-file', action='store',
-             type=argparse.FileType(),
-             help='load autoinstall from file')
-
-
-@subcmd
 def boot(ctx):
     target = ctx.target
-    if ctx.args.this:
-        target = ctx.args.this
+    if ctx.args.img:
+        target = ctx.args.img
 
     kvm = kvm_common(ctx)
     kvm += [drive(target)]
     run(' '.join(kvm))
 
-add_argument('boot', '-t', '--this', action='store',
-             help='use this img')
 
-
-@subcmd
 def help(ctx):
     parser.print_usage()
     sys.exit(1)
 
 
-@subcmd
 def cloud(ctx):
     print(ctx.cloudconfig)
 
@@ -437,4 +397,10 @@ try:
     ctx = Context(parser.parse_args())
 except TypeError:
     help()
-ctx.args.func(ctx)
+
+if ctx.args.build:
+    build(ctx)
+if ctx.args.install:
+    install(ctx)
+if ctx.args.boot:
+    boot(ctx)
