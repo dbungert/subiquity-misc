@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+
+# unroll curtin storage configs into a more readable tree
+
+import json
+import sys
+
+with open(sys.argv[1], 'r') as fp:
+    configs = json.load(fp)
+
+disks = {}
+partitions = {}
+formats = {}
+mounts = {}
+
+for cfg in configs:
+    if cfg['type'] == 'disk':
+        disks[cfg['id']] = cfg
+        cfg['partitions'] = []
+
+for cfg in configs:
+    if cfg['type'] == 'partition':
+        partitions[cfg['id']] = cfg
+        disk = disks[cfg['device']]
+        disk['partitions'].append(cfg)
+
+for cfg in configs:
+    if cfg['type'] == 'format':
+        formats[cfg['id']] = cfg
+        partition = partitions[cfg['volume']]
+        partition['format'] = cfg
+
+for cfg in configs:
+    if cfg['type'] == 'mount':
+        mounts[cfg['id']] = cfg
+        format = formats[cfg['device']]
+        partition = partitions[format['volume']]
+        partition['mount'] = cfg
+
+for _, v in mounts.items():
+    v.pop('id')
+    v.pop('type')
+    v.pop('device')
+for _, v in formats.items():
+    v.pop('id')
+    v.pop('type')
+    v.pop('volume')
+for _, v in partitions.items():
+    v.pop('id')
+    v.pop('type')
+    v.pop('device')
+for _, v in disks.items():
+    v.pop('id')
+    v.pop('type')
+
+print(json.dumps(disks, indent=2))

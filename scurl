@@ -20,7 +20,7 @@ status=$(head -n1 < "$headers" | awk '{print $2}')
 if [ "$ec" = "0" -a "$status" = "200" ] ; then
     # when things look good, print headers and formatted data
     cat "$headers"
-    echo "$data" | jq -C
+    echo "$data" | jq
 else
     # only print stderr if curl exited with error
     [ "$ec" != "0" ] && cat "$stderr"

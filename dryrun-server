@@ -16,13 +16,14 @@ rm -fr .subiquity
 
 args=(--dry-run)
 args+=(--bootloader uefi)
+# args+=(--bootloader bios)
 
-# args+=(--machine-config examples/simple.json)
+args+=(--machine-config examples/simple.json)
 # args+=(--machine-config examples/many-nics-and-disks.json.json)
-# args+=(--autoinstall="")
-args+=(--machine-config examples/win10.json)
+# args+=(--machine-config examples/win10.json)
 # args+=(--machine-config ~/probert.json)
 
+# args+=(--autoinstall="")
 # args+=(--autoinstall examples/autoinstall.yaml)
 
 python3 -m subiquity.cmd.server "${args[@]}"

@@ -26,9 +26,12 @@ def show(cmd):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-q', '--qemu', default=False, action='store_true')
+    parser.add_argument('-s', '--schroot', default=False, action='store_true')
     parser.add_argument('-r', '--release', default=default_release, type=str)
     parser.add_argument('-a', '--arch', default='', type=str)
     parser.add_argument('-b', '--build', default=False, action='store_true')
+    parser.add_argument('-B', '--force_build', default=False,
+                        action='store_true')
     parser.add_argument('target', nargs='?')
     parser.add_argument('extra', nargs='*')
     return parser.parse_args()
@@ -74,7 +77,11 @@ if args.qemu:
             + ' -o/srv/qemu'
 
     found = os.path.exists(image)
-else:
+elif args.schroot:
+    adt += ['schroot', f'{args.release}-{args.arch}']
+    build = 'figure out schroot build command'
+    found = True
+else:  # lxd
     image = f'autopkgtest/{ostype}/{args.release}/{args.arch}'
     adt += ['lxd', image]
     build = f'autopkgtest-build-lxd images:{ostype}/{args.release}'
@@ -86,11 +93,11 @@ else:
             found = True
             break
 
+if (not found and args.build) or args.force_build:
+    show(build)
+
 if not found:
-    if args.build:
-        show(build)
-    else:
-        raise Exception(f'''\
+    raise Exception(f'''\
 image {image} not found - do we need to create it?  consider command:
 {build}
 ''')

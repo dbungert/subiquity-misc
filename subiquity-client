@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import aiohttp
 import asyncio
 import contextlib
@@ -83,21 +84,21 @@ async def client_factory(socket_path):
         yield Client(session)
 
 
-async def do_guided(client):
-    guided = await client.get('/storage/guided')
-    json_print(guided)
-    disk_id = guided['disks'][0]['id']
+async def guided(client):
+    resp = await client.get('/storage/guided')
+    json_print(resp)
+    disk_id = resp['disks'][0]['id']
     json_print(disk_id)
     choice = {
             "disk_id": disk_id,
             "use_lvm": False,
             "password": None,
     }
-    resp = await client.post('/storage/guided', choice=choice)
-    json_print(resp)
+    json_print(await client.post('/storage/v2/guided', choice=choice))
+    await client.post('/storage/v2')
 
 
-async def do_auto_server_install(client, storage = None):
+async def auto_server_install(client, storage = guided):
     await client.post('/locale', 'en_US.UTF-8')
     keyboard = {
         'layout': 'us',
@@ -109,18 +110,8 @@ async def do_auto_server_install(client, storage = None):
     await client.post('/network')
     await client.post('/proxy', '')
     await client.post('/mirror', 'http://us.archive.ubuntu.com/ubuntu')
-    if storage:
-        await storage(client)
-    else:
-        guided = await client.get('/storage/guided')
-        disk_id = guided['disks'][0]['id']
-        choice = {
-                'disk_id': disk_id,
-                'use_lvm': False,
-                'password': None,
-        }
-        storage = await client.post('/storage/guided', choice=choice)
-        await client.post('/storage', storage['config'])
+    await client.post('/free_software', True)
+    await storage(client)
     await client.get('/meta/status', cur='WAITING')
     await client.post('/meta/confirm', tty='/dev/tty1')
     await client.get('/meta/status', cur='NEEDS_CONFIRMATION')
@@ -147,10 +138,21 @@ async def do_auto_server_install(client, storage = None):
     await client.post('/shutdown', mode='REBOOT', immediate=False)
 
 
-async def do_v2(client):
+async def v2(client):
     storage_resp = await client.get('/storage/v2')
     disk = storage_resp['disks'][0]
     disk_id = disk['id']
+    data = {
+        'disk_id': disk_id,
+        'partition': {
+            'size': 0,
+            'number': 4,
+            'mount': '',
+            'format': '',
+            'annotations': None
+        }
+    }
+    await client.post('/storage/v2/delete_partition', data)
     await client.post('/storage/v2/reformat_disk', disk_id=disk_id)
     data = {
         'disk_id': disk_id,
@@ -164,15 +166,33 @@ async def do_v2(client):
     }
     await client.post('/storage/v2/add_partition', data)
     data['partition']['format'] = 'ext4'
-    edit_resp = await client.post('/storage/v2/edit_partition', data)
-    json_print(edit_resp)
+    await client.post('/storage/v2/edit_partition', data)
+    await client.post('/storage/v2/reset')
+    choice = {
+        "disk_id": disk_id,
+        "use_lvm": False,
+        "password": None,
+    }
+    json_print(await client.post('/storage/v2/guided', choice=choice))
     await client.post('/storage/v2')
 
 
 async def main():
     async with client_factory(find_socket()) as client:
-        await client.post('/shutdown', mode='REBOOT', immediate=True)
-        # await do_auto_server_install(client, do_v2)
+        # await guided(client)
+        # await v2(client)
+        # await auto_server_install(client)
+        # resp = await client.post('/storage/v2/add_boot_partition', disk_id='disk-sda')
+        # json_print(resp)
+        data = {
+            'disk_id': 'disk-sda',
+            'partition': {
+                'mount': '/',
+                'format': 'ext4',
+            }
+        }
+        resp = await client.post('/storage/v2/add_partition', data)
+        json_print(resp)
 
 
 if __name__ == "__main__":

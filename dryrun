@@ -7,10 +7,18 @@ rm -fr .subiquity
 PYTHONPATH=$PWD:$PWD/probert:$PWD/curtin
 export PYTHONPATH
 
-CONFIG=examples/win10.json
-# CONFIG=examples/existing-partitions.json
-# CONFIG=examples/simple.json
-# CONFIG=examples/many-nics-and-disks.json
-# CONFIG=/home/dbungert/a/probert.json
+args=(--dry-run)
+args+=(--bootloader uefi)
+# args+=(--bootloader bios)
 
-python3 -m subiquity --dry-run --bootloader uefi --machine-config ${CONFIG}
+# args+=(--machine-config examples/simple.json)
+args+=(--machine-config examples/many-nics-and-disks.json)
+# args+=(--machine-config examples/win10.json)
+# args+=(--machine-config ~/probert.json)
+
+# args+=(--autoinstall="")
+# args+=(--autoinstall examples/autoinstall.yaml)
+
+args+=(--source-catalog="install-sources.yaml")
+
+python3 -m subiquity "${args[@]}"

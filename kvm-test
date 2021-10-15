@@ -22,7 +22,7 @@ iso:
         desktop: impish/impish-desktop-amd64.iso
         hirsute: hirsute/ubuntu-21.04-live-server-amd64.iso
         groovy: groovy/ubuntu-20.10-live-server-amd64.iso
-        focal: focal/focal-live-server-amd64.iso
+        focal: focal/ubuntu-20.04.3-live-server-amd64.iso
         bionic: bionic/bionic-live-server-amd64.iso
     default: edge
 '''
@@ -59,6 +59,9 @@ autoinstall:
     version: 1
     locale:
         en_US.UTF-8
+    refresh-installer:
+        update: yes
+        channel: candidate
     ssh:
         install-server: true
         allow-pw: true
@@ -105,9 +108,13 @@ parser.add_argument('-n', '--nets', action='store', default=1, type=int,
                     help='number of network interfaces')
 parser.add_argument('-q', '--quick', default=False, action='store_true',
                     help='build iso with quick-test-this-branch')
-parser.add_argument('-c', '--clean', default=False, action='store_true',
-                    help='agressively clean the snapcraft build env')
-parser.add_argument('-b', '--base', default=False, action='store_true',
+# parser.add_argument('-e', '--edge', default=False, action='store_true',
+#                     help='build iso with make-edge-iso (edge channel)')
+# parser.add_argument('-c', '--candidate', default=False, action='store_true',
+#                     help='build iso with make-edge-iso (candidate channel)')
+parser.add_argument('-c', '--channel', default=False, action='store',
+                    help='build iso with snap from channel')
+parser.add_argument('-b', '--use_base', default=False, action='store_true',
                     help='use base iso')
 parser.add_argument('-i', '--img', action='store', help='use this img')
 parser.add_argument('-a', '--autoinstall', default=False,
@@ -121,6 +128,8 @@ parser.add_argument('-t', '--this', action='store',
 parser.add_argument('-f', '--autoinstall-file', action='store',
                     type=argparse.FileType(),
                     help='load autoinstall from file')
+parser.add_argument('-u', '--update', action='store',
+                    help='subiquity-channel argument')
 
 parser.add_argument('--build', default=False, action='store_true')
 parser.add_argument('--install', default=False, action='store_true')
@@ -185,24 +194,50 @@ def mounter(src, dest):
 
 
 def build(ctx):
-    if ctx.args.base:
-        ctx.baseiso = ctx.args.base
     run('sudo -v')
     run(f'rm -f {ctx.iso}')
-    if ctx.args.quick:
-        run(f'sudo ./scripts/quick-test-this-branch.sh {ctx.baseiso} {ctx.iso}')
-    else:
-        cleanarg = ''
-        if not ctx.args.clean:
-            cleanarg = 'subiquity'
-        with delete_later('subiquity_test.snap') as snap:
+    project = os.path.basename(os.getcwd())
+    # FIXME generalize to
+    # PYTHONPATH=$LIVEFS_EDITOR python3 -m livefs_edit $OLD_ISO $NEW_ISO
+    # --inject-snap $SUBIQUITY_SNAP_PATH
+    if project.startswith('subiquity'):
+        if ctx.args.quick:
+            run(f'sudo ./scripts/quick-test-this-branch.sh {ctx.baseiso} \
+                {ctx.iso}')
+        # elif ctx.args.edge:
+        #     run(f'sudo ./scripts/make-edge-iso.sh {ctx.baseiso} {ctx.iso}')
+        # elif ctx.args.candidate:
+        #     run(f'sudo ./scripts/make-edge-iso.sh {ctx.baseiso} {ctx.iso} \
+        #         candidate')
+        elif ctx.args.channel:
+            run(f'sudo PYTHONPATH=$LIVEFS_EDITOR python3 -m livefs_edit \
+                    {ctx.baseiso} {ctx.iso} \
+                    --add-snap-from-store subiquity {ctx.args.channel}')
+        else:
+            with delete_later('subiquity_test.snap') as snap:
+                run(f'''
+                    snapcraft clean --use-lxd
+                    snapcraft snap --use-lxd --output {snap}
+                    test -f {snap}
+                    sudo ./scripts/inject-subiquity-snap.sh {ctx.baseiso} \
+                        {snap} {ctx.iso}
+                    ''')
+                    # sudo PYTHONPATH=$LIVEFS_EDITOR python3 -m livefs_edit \
+                    #     {ctx.baseiso} {ctx.iso} \
+                    #     --add-snap-from-store core20 stable \
+                    #     --inject-snap {snap}
+    elif project == 'ubuntu-desktop-installer':
+        with delete_later('udi_test.snap') as snap:
             run(f'''
-                snapcraft clean --use-lxd {cleanarg}
+                snapcraft clean --use-lxd
                 snapcraft snap --use-lxd --output {snap}
                 test -f {snap}
-                sudo ./scripts/inject-subiquity-snap.sh {ctx.baseiso} {snap} \
-                    {ctx.iso}
+                sudo ./scripts/inject-snap {ctx.baseiso} \
+                    {ctx.iso} {snap}
                 ''')
+    else:
+        raise Exception(f'do not know how to build {projct}')
+
     run(f'test -f {ctx.iso}')
 
 
@@ -268,8 +303,7 @@ def nets(ctx):
             port = ports.get()
             ret += ['-nic',
                     'user,model=virtio-net-pci,' +
-                    f'hostfwd=tcp::{port}-:22']
-            #,restrict=on']
+                    f'hostfwd=tcp::{port}-:22']  #,restrict=on']
     else:
         ret += ['-nic', 'none']
     return ret
@@ -289,10 +323,11 @@ def memory(ctx):
 
 def kvm_common(ctx):
     ret = ['kvm', '-no-reboot']
-    # ret += ['-vga', 'vmware']
-    ret += memory(ctx)
-    ret += bios(ctx)
-    ret += nets(ctx)
+    # ret.extend(('-vga', 'virtio'))
+    ret.extend(memory(ctx))
+    ret.extend(bios(ctx))
+    ret.extend(nets(ctx))
+    ret.extend(('-device', 'AC97', '-device', 'usb-ehci'))
     return ret
 
 
@@ -304,29 +339,38 @@ def grub_get_extra_args(mntdir):
     # Parse the args out of grub.cfg and include them with ours.
     cfgpath = f'{mntdir}/boot/grub/grub.cfg'
     ret = []
-    with open(cfgpath, 'r') as fp:
-        for line in fp.readlines():
-            chunks = line.strip().split('\t')
-            # ['linux', '/casper/vmlinuz  ---']
-            # ['linux', '/casper/vmlinuz layerfs-path=a.b.c.d.e.squashfs ---']
-            if not chunks or not chunks[0] == 'linux':
-                continue
-            subchunks = chunks[1].split(' ')
-            if not subchunks or not subchunks[0] == '/casper/vmlinuz':
-                continue
-            for sc in subchunks[1:]:
-                if sc != '---':
-                    ret.append(sc)
-            break
+    try:
+        with open(cfgpath, 'r') as fp:
+            for line in fp.readlines():
+                chunks = line.strip().split('\t')
+                # ['linux', '/casper/vmlinuz  ---']
+                # layerfs-path=a.b.c.d.e.squashfs
+                if not chunks or not chunks[0] == 'linux':
+                    continue
+                subchunks = chunks[1].split(' ')
+                if not subchunks or not subchunks[0] == '/casper/vmlinuz':
+                    continue
+                for sc in subchunks[1:]:
+                    if sc != '---':
+                        ret.append(sc)
+                break
+        # breakpoint()
+    except FileNotFoundError:
+        pass
     return ret
+
+
+def get_initrd(mntdir):
+    for initrd in ('initrd', 'initrd.lz', 'initrd.lz4'):
+        path = f'{mntdir}/casper/{initrd}'
+        if os.path.exists(path):
+            return path
+    raise Exception('initrd not found')
 
 
 def install(ctx):
     if os.path.exists(ctx.target):
-        if not ctx.args.overwrite:
-            print('install refused: will not overwrite existing image')
-            sys.exit(1)
-        else:
+        if ctx.args.overwrite:
             os.remove(ctx.target)
 
     run('sudo -v')
@@ -340,7 +384,7 @@ def install(ctx):
 
         if ctx.args.this:
             iso = ctx.args.this
-        elif ctx.args.base:
+        elif ctx.args.use_base:
             iso = ctx.baseiso
         else:
             iso = ctx.iso
@@ -360,14 +404,20 @@ def install(ctx):
             kvm += [drive(create_seed(ctx.cloudconfig, tempdir), True)]
             appends += ['autoinstall']
 
-        run(f'qemu-img create -f qcow2 {ctx.target} 25G')
+        if ctx.args.update:
+            appends += ['subiquity-channel=candidate']
+
+        if not os.path.exists(ctx.target) or ctx.args.overwrite:
+            run(f'qemu-img create -f qcow2 {ctx.target} 25G')
         # run(f'qemu-img create -f qcow2 {drive2} 25G')
         with mounter(iso, mntdir):
             appends += grub_get_extra_args(mntdir)
 
             if len(appends) > 0:
+                # if we're passing kernel args, we need to manually specify
+                # kernel / initrd
                 kvm += ['-kernel', f'{mntdir}/casper/vmlinuz']
-                kvm += ['-initrd', f'{mntdir}/casper/initrd']
+                kvm += ['-initrd', get_initrd(mntdir)]
                 toappend = ' '.join(appends)
                 kvm += ['-append', f'"{toappend}"']
 
@@ -397,6 +447,9 @@ try:
     ctx = Context(parser.parse_args())
 except TypeError:
     help()
+
+if ctx.args.use_base and ctx.args.build:
+    raise Exception('cannot use base iso and build')
 
 if ctx.args.build:
     build(ctx)
